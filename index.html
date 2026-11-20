@@ -1,0 +1,455 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cắt và lọc dữ liệu</title>
+<style>
+* { box-sizing: border-box; }
+body { margin: 16px; color: #222; background: #fff; font: 14px/1.5 Arial, sans-serif; }
+main { max-width: 1000px; margin: auto; }
+h1 { margin: 0 0 14px; font-size: 22px; }
+h2 { margin: 0 0 6px; font-size: 16px; }
+section { min-width: 0; margin-bottom: 18px; }
+button, input, textarea { font: inherit; }
+button { padding: 6px 12px; color: #111; background: #eee; border: 1px solid #999; border-radius: 2px; cursor: pointer; }
+button:hover:not(:disabled) { background: #ddd; }
+button:disabled { opacity: .5; cursor: default; }
+textarea { display: block; width: 100%; min-height: 190px; padding: 8px; resize: vertical; color: #222; background: #fff; border: 1px solid #999; border-radius: 0; font: 14px/1.5 Consolas, monospace; tab-size: 4; }
+input[type="text"] { width: 100%; min-width: 0; padding: 6px; color: #222; background: #fff; border: 1px solid #aaa; border-radius: 2px; }
+fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
+.row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.field { display: block; }
+.field span { display: block; margin-bottom: 4px; }
+.check { display: flex; align-items: baseline; gap: 6px; margin: 8px 0; }
+.check input { flex: none; margin: 0; }
+.actions, .tool-menu { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.actions { margin-top: 8px; }
+.tool-menu { margin-bottom: 12px; }
+.tool-menu button[aria-pressed="true"] { font-weight: bold; background: #d9d9d9; border-color: #333; }
+.hint, .badge, #statusMessage { color: #555; font-size: 13px; overflow-wrap: anywhere; }
+.hint { margin: 6px 0; }
+#errorMessage { margin-top: 8px; color: #a00; }
+#inputPanel { position: relative; }
+.drop-overlay { position: absolute; inset: 28px 0 70px; display: grid; place-items: center; border: 2px dashed #666; background: #eee; pointer-events: none; }
+.progress-track { height: 4px; margin-bottom: 6px; background: #eee; }
+.progress-fill { width: 0; height: 100%; background: #666; }
+[hidden] { display: none !important; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+@media (max-width: 600px) {
+  body { margin: 10px; }
+  .row { grid-template-columns: 1fr; }
+  input[type="text"], textarea { font-size: 16px; }
+}
+</style>
+</head>
+<body>
+<main>
+<h1>Cắt và lọc dữ liệu</h1>
+<section id="inputPanel" aria-labelledby="inputTitle">
+  <h2 id="inputTitle">Dán dữ liệu</h2>
+  <label class="sr-only" for="inputText">Dữ liệu cần xử lý, mỗi dòng một bản ghi</label>
+  <textarea id="inputText" rows="8" wrap="off" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder="Dán dữ liệu tại đây..."></textarea>
+  <label class="check"><input id="deduplicate" type="checkbox" checked><span>Lọc trùng (phân biệt hoa thường, bỏ qua khoảng trắng cuối dòng)</span></label>
+  <div class="actions">
+    <button id="importButton" type="button">Mở file</button>
+    <button id="clearButton" type="button">Xóa</button>
+    <span>Số dòng: <strong id="statInput">0</strong></span>
+  </div>
+  <input id="fileInput" type="file" accept=".txt,.csv,.tsv,.log,text/*" hidden>
+  <p id="inputInfo" class="hint" hidden></p>
+  <div id="dropOverlay" class="drop-overlay" hidden>Thả file văn bản vào đây</div>
+</section>
+<section aria-label="Chọn chức năng">
+  <form id="optionsForm" novalidate>
+    <fieldset id="settingsFields"><legend class="sr-only">Chọn chức năng</legend>
+      <div id="toolMenu" class="tool-menu" role="group" aria-label="Chọn chức năng">
+        <button id="cutToolButton" type="button" aria-pressed="true" aria-controls="cutOptions">Cắt dòng dữ liệu</button>
+        <button id="filterToolButton" type="button" aria-pressed="false" aria-controls="filterOptions">Lọc dòng dữ liệu</button>
+        <button id="affixToolButton" type="button" aria-pressed="false" aria-controls="affixOptions">Thêm đầu cuối</button>
+      </div>
+      <fieldset id="cutOptions"><legend class="sr-only">Cắt dòng dữ liệu</legend>
+        <div class="row">
+          <label class="field"><span>Cắt từ</span><input id="startMarker" type="text" autocomplete="off" spellcheck="false" placeholder="Để trống = đầu dòng"></label>
+          <label class="field"><span>Đến</span><input id="endMarker" type="text" value="|" autocomplete="off" spellcheck="false" placeholder="Để trống = cuối dòng"></label>
+        </div>
+      </fieldset>
+      <fieldset id="filterOptions" hidden disabled><legend class="sr-only">Lọc dòng dữ liệu</legend>
+        <div class="row">
+          <label class="field"><span>Lọc dòng có</span><input id="includeText" type="text" autocomplete="off" spellcheck="false" placeholder="Nhập nội dung hoặc để trống"></label>
+          <label class="field"><span>Lọc dòng không có</span><input id="excludeText" type="text" autocomplete="off" spellcheck="false" placeholder="Nhập nội dung hoặc để trống"></label>
+        </div>
+      </fieldset>
+      <fieldset id="affixOptions" hidden disabled><legend class="sr-only">Thêm đầu cuối</legend>
+        <div class="row">
+          <label class="field"><span>Thêm vào đầu</span><input id="prefixText" type="text" autocomplete="off" spellcheck="false" placeholder="Nhập nội dung hoặc để trống"></label>
+          <label class="field"><span>Thêm vào cuối</span><input id="suffixText" type="text" autocomplete="off" spellcheck="false" placeholder="Nhập nội dung hoặc để trống"></label>
+        </div>
+      </fieldset>
+    </fieldset>
+  </form>
+  <div class="actions">
+    <button id="runButton" type="submit" form="optionsForm"><span id="runSpinner" hidden aria-hidden="true">...</span><span id="runLabel">Cắt dữ liệu</span></button>
+    <button id="cancelButton" type="button" hidden>Hủy</button>
+  </div>
+  <div id="errorMessage" role="alert" hidden></div>
+</section>
+<section id="resultPanel" aria-labelledby="outputTitle">
+  <h2 id="outputTitle">Kết quả <span id="resultBadge" class="badge">Chưa xử lý</span></h2>
+  <div id="progressTrack" class="progress-track" role="progressbar" aria-label="Tiến trình xử lý" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" hidden><div id="progressFill" class="progress-fill"></div></div>
+  <label class="sr-only" for="outputText">Kết quả sau xử lý</label>
+  <textarea id="outputText" rows="8" wrap="off" spellcheck="false" readonly></textarea>
+  <div class="actions"><button id="copyButton" type="button" disabled>Sao chép</button><button id="downloadButton" type="button" disabled>Tải TXT</button></div>
+  <p id="outputInfo" class="hint"></p>
+</section>
+<p id="statusMessage" role="status" aria-live="polite"></p>
+</main>
+<script id="text-core">
+'use strict';
+(function (root) {
+  function positive(value, label) {
+    const text = String(value == null ? '' : value);
+    if (!/^\d+$/.test(text) || !Number.isSafeInteger(Number(text)) || Number(text) < 1) {
+      throw new Error(label + ' phải là số nguyên từ 1 trở lên.');
+    }
+    return Number(text);
+  }
+  function validate(options) {
+    const o = Object.assign({ mode: 'between', startMarker: '', endMarker: '', startOccurrence: 1, endOccurrence: 1, startDirection: 'left', endDirection: 'left', includeStart: false, includeEnd: false, positionStart: 1, positionEnd: '', columnSeparator: '|', columnNumber: 1, columnDirection: 'left', unmatched: 'keep', deduplicate: false, removeEmpty: false, trim: false, includeText: '', excludeText: '', filterCaseSensitive: true, prefixText: '', suffixText: '' }, options);
+    if (!['between', 'position', 'column', 'none', 'affix'].includes(o.mode)) throw new Error('Chế độ xử lý không hợp lệ.');
+    if (!['keep', 'skip', 'empty'].includes(o.unmatched)) throw new Error('Lựa chọn cho dòng không khớp không hợp lệ.');
+    if (o.mode === 'between') {
+      o.startMarker = String(o.startMarker); o.endMarker = String(o.endMarker);
+      if (o.startMarker) o.startOccurrence = positive(o.startOccurrence, 'Lần xuất hiện của mốc đầu');
+      if (o.endMarker) o.endOccurrence = positive(o.endOccurrence, 'Lần xuất hiện của mốc cuối');
+    }
+    if (o.mode === 'position') {
+      o.positionStart = positive(o.positionStart, 'Vị trí bắt đầu');
+      o.positionEnd = o.positionEnd === '' ? null : positive(o.positionEnd, 'Vị trí kết thúc');
+      if (o.positionEnd !== null && o.positionEnd < o.positionStart) throw new Error('Vị trí kết thúc phải lớn hơn hoặc bằng vị trí bắt đầu.');
+    }
+    if (o.mode === 'column') {
+      o.columnSeparator = String(o.columnSeparator);
+      if (o.columnSeparator === '') throw new Error('Hãy nhập dấu phân cách cột.');
+      o.columnNumber = positive(o.columnNumber, 'Số thứ tự cột');
+    }
+    o.includeText = String(o.includeText == null ? '' : o.includeText);
+    o.excludeText = String(o.excludeText == null ? '' : o.excludeText);
+    o.filterCaseSensitive = o.filterCaseSensitive !== false;
+    o.prefixText = String(o.prefixText == null ? '' : o.prefixText);
+    o.suffixText = String(o.suffixText == null ? '' : o.suffixText);
+    return o;
+  }
+  function findMarker(text, marker, occurrence, direction, lowerBound) {
+    const start = lowerBound || 0;
+    const positions = [];
+    let at = text.indexOf(marker, start);
+    while (at !== -1) {
+      positions.push(at);
+      if (direction !== 'right' && positions.length === occurrence) return at;
+      at = text.indexOf(marker, at + marker.length);
+    }
+    return positions[direction === 'right' ? positions.length - occurrence : occurrence - 1] ?? -1;
+  }
+  function extractLine(line, o) {
+    if (o.mode === 'affix') return { matched: true, value: o.prefixText + line + o.suffixText };
+    if (o.mode === 'none') return { matched: true, value: line };
+    if (o.mode === 'position') {
+      const chars = Array.from(line);
+      if (o.positionStart > chars.length) return { matched: false, value: '' };
+      return { matched: true, value: chars.slice(o.positionStart - 1, o.positionEnd === null ? undefined : o.positionEnd).join('') };
+    }
+    if (o.mode === 'column') {
+      const columns = line.split(o.columnSeparator);
+      const index = o.columnDirection === 'right' ? columns.length - o.columnNumber : o.columnNumber - 1;
+      return index >= 0 && index < columns.length ? { matched: true, value: columns[index] } : { matched: false, value: '' };
+    }
+    let start = 0;
+    let searchAfter = 0;
+    if (o.startMarker !== '') {
+      const index = findMarker(line, o.startMarker, o.startOccurrence, o.startDirection, 0);
+      if (index < 0) return { matched: false, value: '' };
+      searchAfter = index + o.startMarker.length;
+      start = o.includeStart ? index : searchAfter;
+    }
+    let end = line.length;
+    if (o.endMarker !== '') {
+      const index = findMarker(line, o.endMarker, o.endOccurrence, o.endDirection, searchAfter);
+      if (index < 0) return { matched: false, value: '' };
+      end = index + (o.includeEnd ? o.endMarker.length : 0);
+    }
+    return { matched: true, value: line.slice(start, end) };
+  }
+  function splitLines(text) {
+    if (text === '') return [];
+    const normalized = text.replace(/\r\n?/g, '\n');
+    const lines = normalized.split('\n');
+    if (normalized.endsWith('\n')) lines.pop();
+    return lines;
+  }
+  function* processLines(text, options) {
+    const o = validate(options);
+    const lines = splitLines(String(text));
+    const output = [];
+    const seen = o.deduplicate ? new Set() : null;
+    const include = o.filterCaseSensitive ? o.includeText : o.includeText.toLowerCase();
+    const exclude = o.filterCaseSensitive ? o.excludeText : o.excludeText.toLowerCase();
+    const stats = { input: lines.length, output: 0, duplicates: 0, unmatched: 0, skipped: 0, empty: 0, filtered: 0 };
+    for (let i = 0; i < lines.length; i++) {
+      const searchLine = o.filterCaseSensitive ? lines[i] : lines[i].toLowerCase();
+      if ((include !== '' && !searchLine.includes(include)) || (exclude !== '' && searchLine.includes(exclude))) {
+        stats.filtered++;
+      } else {
+        const result = extractLine(lines[i], o);
+        let value = result.value;
+        let retain = true;
+        if (!result.matched) {
+          stats.unmatched++;
+          if (o.unmatched === 'skip') { stats.skipped++; retain = false; }
+          else value = o.unmatched === 'keep' ? lines[i] : '';
+        }
+        if (retain) {
+          if (o.trim) value = value.trim();
+          const key = value.trimEnd();
+          if (o.removeEmpty && value === '') stats.empty++;
+          else if (seen && seen.has(key)) stats.duplicates++;
+          else { if (seen) seen.add(key); output.push(value); }
+        }
+      }
+      if ((i + 1) % 5000 === 0) yield { processed: i + 1, total: lines.length };
+    }
+    stats.output = output.length;
+    return { text: output.join('\n') + (output.length && output[output.length - 1] === '' ? '\n' : ''), stats: stats };
+  }
+
+  function transform(text, options) { const task = processLines(text, options); let part; do { part = task.next(); } while (!part.done); return part.value; }
+  root.TextToolCore = Object.freeze({ validate: validate, extractLine: extractLine, splitLines: splitLines, processLines: processLines, transform: transform });
+})(globalThis);
+</script>
+<script>
+'use strict';
+(function () {
+  const $ = function (id) { return document.getElementById(id); };
+  const format = new Intl.NumberFormat('vi-VN');
+  let result = null;
+  let dirty = true;
+  let busy = false;
+  let activeTool = 'cut';
+  const toolLabels = { cut: 'Cắt dữ liệu', filter: 'Lọc dữ liệu', affix: 'Thêm đầu cuối' };
+  let taskId = 0;
+  let activeWorker = null;
+  let workerUrl = null;
+  let sourceName = '';
+  let inputTimer = null;
+  function options() {
+    const filtering = activeTool === 'filter';
+    return { mode: activeTool === 'affix' ? 'affix' : filtering ? 'none' : 'between', prefixText: activeTool === 'affix' ? $('prefixText').value : '', suffixText: activeTool === 'affix' ? $('suffixText').value : '', startMarker: $('startMarker').value, endMarker: $('endMarker').value, includeText: filtering ? $('includeText').value : '', excludeText: filtering ? $('excludeText').value : '', filterCaseSensitive: true, unmatched: 'keep', deduplicate: $('deduplicate').checked };
+  }
+  function setStatus(text) { $('statusMessage').textContent = text; }
+  function clearError() { $('errorMessage').hidden = true; $('errorMessage').textContent = ''; }
+  function showError(message) { $('errorMessage').textContent = message; $('errorMessage').hidden = false; setStatus('Chưa xử lý được. Kiểm tra thông báo trong phần thiết lập.'); }
+  function countLines(text) {
+    if (text === '') return 0;
+    let count = 1;
+    for (let i = 0; i < text.length; i++) {
+      if (text[i] === '\r') { count++; if (text[i + 1] === '\n') i++; }
+      else if (text[i] === '\n') count++;
+    }
+    if (/[\r\n]$/.test(text)) count--;
+    return count;
+  }
+  function refreshActions() {
+    const available = !busy && !dirty && result !== null && result.stats.output > 0;
+    ['copyButton', 'downloadButton'].forEach(function (id) { $(id).disabled = !available; });
+    $('clearButton').disabled = busy || ($('inputText').value === '' && result === null);
+  }
+  function updateMode() {
+    [['cut', 'cutOptions', 'cutToolButton'], ['filter', 'filterOptions', 'filterToolButton'], ['affix', 'affixOptions', 'affixToolButton']].forEach(function (tool) {
+      const selected = activeTool === tool[0];
+      $(tool[1]).hidden = !selected;
+      $(tool[1]).disabled = busy || !selected;
+      $(tool[2]).setAttribute('aria-pressed', String(selected));
+    });
+    if (!busy) $('runLabel').textContent = toolLabels[activeTool];
+  }
+  function selectTool(tool) {
+    if (busy || activeTool === tool) return;
+    activeTool = tool;
+    updateMode(); markDirty();
+  }
+  function updateInput() {
+    $('statInput').textContent = format.format(countLines($('inputText').value));
+    $('inputInfo').textContent = sourceName;
+    $('inputInfo').hidden = !sourceName;
+  }
+  function markDirty() {
+    dirty = true;
+    clearError();
+    $('resultBadge').textContent = result ? 'Cần xử lý lại' : 'Chưa xử lý';
+    $('resultBadge').className = 'badge' + (result ? ' stale' : '');
+    if (result) $('outputInfo').textContent = 'Kết quả cũ · bấm xử lý để cập nhật';
+    refreshActions();
+    if (result) setStatus('Dữ liệu hoặc thiết lập đã thay đổi. Bấm xử lý để cập nhật kết quả.');
+  }
+  function disposeWorker() {
+    if (activeWorker) activeWorker.terminate();
+    activeWorker = null;
+    if (workerUrl) URL.revokeObjectURL(workerUrl);
+    workerUrl = null;
+  }
+  function setBusy(value, label) {
+    busy = value;
+    $('settingsFields').disabled = value;
+    $('inputText').readOnly = value;
+    ['importButton', 'fileInput', 'runButton', 'deduplicate'].forEach(function (id) { $(id).disabled = value; });
+    $('cancelButton').hidden = !value;
+    $('runSpinner').hidden = !value;
+    $('progressTrack').hidden = !value;
+    $('resultPanel').setAttribute('aria-busy', String(value));
+    $('runLabel').textContent = value ? label || 'Đang xử lý…' : toolLabels[activeTool];
+    updateMode();
+    refreshActions();
+  }
+  function progress(processed, total) {
+    const percent = total === 0 ? 0 : Math.round(processed / total * 100);
+    $('progressFill').style.width = percent + '%';
+    $('progressTrack').setAttribute('aria-valuenow', String(percent));
+  }
+  function complete(data, started, id) {
+    if (id !== taskId) return;
+    disposeWorker();
+    result = data;
+    dirty = false;
+    $('outputText').value = data.text;
+    $('outputText').scrollTop = 0;
+    $('outputText').scrollLeft = 0;
+    $('statInput').textContent = format.format(data.stats.input);
+    $('resultBadge').textContent = data.stats.output ? 'Đã xử lý' : 'Kết quả rỗng';
+    $('resultBadge').className = 'badge ready';
+    const summary = [format.format(data.stats.output) + ' dòng'];
+    if (data.stats.duplicates) summary.push('bỏ ' + format.format(data.stats.duplicates) + ' dòng trùng');
+    if (data.stats.filtered) summary.push('bỏ ' + format.format(data.stats.filtered) + ' dòng không đạt điều kiện');
+    $('outputInfo').textContent = summary.join(' · ');
+    setBusy(false);
+    setStatus('Đã xử lý xong.');
+  }
+  function failed(error, id) { if (id !== taskId) return; disposeWorker(); setBusy(false); showError(error.message || String(error)); }
+  function run(event) {
+    if (event) event.preventDefault();
+    if (busy) return;
+    clearTimeout(inputTimer);
+    clearError();
+    const text = $('inputText').value;
+    if (text === '') { showError('Hãy dán dữ liệu hoặc mở một file văn bản trước khi xử lý.'); $('inputText').focus(); return; }
+    const settings = options();
+    try { TextToolCore.validate(settings); } catch (error) { showError(error.message); return; }
+    updateInput();
+    const id = ++taskId;
+    const started = performance.now();
+    setBusy(true);
+    progress(0, countLines(text));
+    setStatus('Đang xử lý. Bạn có thể hủy bằng nút Hủy xử lý.', 'busy');
+    let fallbackStarted = false;
+    function fallback() {
+      if (fallbackStarted || id !== taskId) return;
+      fallbackStarted = true;
+      disposeWorker();
+      const iterator = TextToolCore.processLines(text, settings);
+      function tick() {
+        if (id !== taskId) return;
+        try {
+          const part = iterator.next();
+          if (part.done) complete(part.value, started, id);
+          else { progress(part.value.processed, part.value.total); setTimeout(tick, 0); }
+        } catch (error) { failed(error, id); }
+      }
+      setTimeout(tick, 0);
+    }
+    try {
+      if (typeof Worker === 'undefined') { fallback(); return; }
+      const workerCode = $('text-core').textContent + '\nself.onmessage = function (event) { try { var iterator = TextToolCore.processLines(event.data.text, event.data.options); var part; do { part = iterator.next(); if (!part.done) self.postMessage({type:"progress", value:part.value}); } while (!part.done); self.postMessage({type:"done", value:part.value}); } catch(error) { self.postMessage({type:"error", message:error.message}); } };';
+      workerUrl = URL.createObjectURL(new Blob([workerCode], { type: 'text/javascript' }));
+      activeWorker = new Worker(workerUrl);
+      activeWorker.onmessage = function (message) {
+        if (id !== taskId) return;
+        if (message.data.type === 'progress') progress(message.data.value.processed, message.data.value.total);
+        else if (message.data.type === 'done') complete(message.data.value, started, id);
+        else failed(new Error(message.data.message), id);
+      };
+      activeWorker.onerror = function (error) { error.preventDefault(); fallback(); };
+      activeWorker.postMessage({ text: text, options: settings });
+    } catch (_) { fallback(); }
+  }
+  async function importFile(file) {
+    if (!file || busy) return;
+    clearError();
+    if (file.size > 100 * 1024 * 1024) { showError('File vượt quá 100 MB. Hãy chia nhỏ file trước khi mở.'); return; }
+    const id = ++taskId;
+    setBusy(true, 'Đang mở file…');
+    setStatus('Đang đọc file UTF-8…', 'busy');
+    try {
+      const buffer = await file.arrayBuffer();
+      if (id !== taskId) return;
+      let text;
+      try { text = new TextDecoder('utf-8', { fatal: true }).decode(buffer); }
+      catch (_) { throw new Error('Không đọc được UTF-8. Hãy lưu file bằng mã hóa UTF-8 rồi thử lại.'); }
+      if (text.includes('\u0000')) throw new Error('File có ký tự nhị phân. Hãy chọn file văn bản UTF-8.');
+      $('inputText').value = text;
+      sourceName = file.name;
+      setBusy(false);
+      markDirty();
+      updateInput();
+      setStatus('Đã mở ' + file.name + '. Kiểm tra thiết lập rồi bấm xử lý.');
+    } catch (error) { if (id === taskId) { setBusy(false); showError(error.message); } }
+    finally { if (id === taskId) $('fileInput').value = ''; }
+  }
+  $('cutToolButton').addEventListener('click', function () { selectTool('cut'); });
+  $('filterToolButton').addEventListener('click', function () { selectTool('filter'); });
+  $('affixToolButton').addEventListener('click', function () { selectTool('affix'); });
+  $('deduplicate').addEventListener('change', markDirty);
+  $('optionsForm').addEventListener('submit', run);
+  $('optionsForm').addEventListener('input', function () { updateMode(); markDirty(); });
+  $('optionsForm').addEventListener('change', function () { updateMode(); markDirty(); });
+  $('inputText').addEventListener('input', function () { sourceName = ''; markDirty(); clearTimeout(inputTimer); inputTimer = setTimeout(updateInput, 150); });
+  $('clearButton').addEventListener('click', function () {
+    clearTimeout(inputTimer);
+    $('inputText').value = ''; $('outputText').value = ''; sourceName = ''; result = null;
+    $('outputInfo').textContent = 'Chưa có kết quả';
+    markDirty(); updateInput(); setStatus('Đã xóa dữ liệu. Sẵn sàng cho nội dung mới.'); $('inputText').focus();
+  });
+  $('importButton').addEventListener('click', function () { $('fileInput').click(); });
+  $('fileInput').addEventListener('change', function () { const file = $('fileInput').files[0]; $('fileInput').value = ''; importFile(file); });
+  $('cancelButton').addEventListener('click', function () { taskId++; disposeWorker(); setBusy(false); setStatus('Đã hủy thao tác. Dữ liệu gốc được giữ nguyên.'); });
+  $('copyButton').addEventListener('click', async function () {
+    if (busy || dirty || !result) return;
+    const value = result.text;
+    try { if (!navigator.clipboard || !window.isSecureContext) throw new Error('fallback'); await navigator.clipboard.writeText(value); setStatus('Đã sao chép kết quả.', 'good'); }
+    catch (_) {
+      const output = $('outputText');
+      const previous = document.activeElement;
+      output.focus(); output.select();
+      try { if (!document.execCommand('copy')) throw new Error('copy'); if (previous) previous.focus(); setStatus('Đã sao chép kết quả.', 'good'); }
+      catch (_) { setStatus('Kết quả đã được chọn. Nhấn Ctrl+C hoặc Cmd+C để sao chép.'); }
+    }
+  });
+  $('downloadButton').addEventListener('click', function () {
+    if (busy || dirty || !result || result.stats.output === 0) return;
+    const name = 'ket-qua.txt';
+    const url = URL.createObjectURL(new Blob([result.text], { type: 'text/plain;charset=utf-8' }));
+    const link = document.createElement('a'); link.href = url; link.download = name; link.hidden = true; document.body.appendChild(link); link.click(); link.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 2000);
+    setStatus('Đã tạo file ' + name + ' từ kết quả hiện tại.', 'good');
+  });
+  let dragDepth = 0;
+  $('inputPanel').addEventListener('dragenter', function (event) { event.preventDefault(); if (busy) return; if (event.dataTransfer && Array.from(event.dataTransfer.types).includes('Files')) { dragDepth++; $('dropOverlay').hidden = false; } });
+  $('inputPanel').addEventListener('dragover', function (event) { event.preventDefault(); if (event.dataTransfer) event.dataTransfer.dropEffect = busy ? 'none' : 'copy'; });
+  $('inputPanel').addEventListener('dragleave', function (event) { event.preventDefault(); dragDepth = Math.max(0, dragDepth - 1); if (!dragDepth) $('dropOverlay').hidden = true; });
+  $('inputPanel').addEventListener('drop', function (event) { event.preventDefault(); event.stopPropagation(); dragDepth = 0; $('dropOverlay').hidden = true; if (!busy && event.dataTransfer) importFile(event.dataTransfer.files[0]); });
+  document.addEventListener('dragover', function (event) { if (event.dataTransfer && Array.from(event.dataTransfer.types).includes('Files')) event.preventDefault(); });
+  document.addEventListener('drop', function (event) { if (event.dataTransfer && Array.from(event.dataTransfer.types).includes('Files')) event.preventDefault(); });
+  document.addEventListener('keydown', function (event) { if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); run(); } });
+  updateMode(); updateInput(); refreshActions();
+})();
+</script>
+</body>
+</html>
